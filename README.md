@@ -1,154 +1,205 @@
-# AlagaHub — Rural Health Connect 🏥
-**Healthcare kahit saan (Healthcare wherever you are)**
+<div align="center">
+
+<br/>
+
+```
+░█████╗░██╗░░░░░░█████╗░░██████╗░░█████╗░██╗░░██╗██╗░░░██╗██████╗░
+██╔══██╗██║░░░░░██╔══██╗██╔════╝░██╔══██╗██║░░██║██║░░░██║██╔══██╗
+███████║██║░░░░░███████║██║░░██╗░███████║███████║██║░░░██║██████╦╝
+██╔══██║██║░░░░░██╔══██║██║░░╚██╗██╔══██║██╔══██║██║░░░██║██╔══██╗
+██║░░██║███████╗██║░░██║╚██████╔╝██║░░██║██║░░██║╚██████╔╝██████╦╝
+╚═╝░░╚═╝╚══════╝╚═╝░░╚═╝░╚═════╝░╚═╝░░╚═╝╚═╝░░╚═╝░╚═════╝░╚═════╝░
+```
+
+### *Bridging Patients and Healthcare Workers — Seamlessly.*
+
+<br/>
+
+![Flutter](https://img.shields.io/badge/Flutter-02569B?style=for-the-badge&logo=flutter&logoColor=white)
+![Dart](https://img.shields.io/badge/Dart-0175C2?style=for-the-badge&logo=dart&logoColor=white)
+![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)
+![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge)
+
+</div>
 
 ---
 
-## Quick Start (VS Code)
+## 🩺 What is AlagaHub?
+
+**AlagaHub** is a cross-platform mobile application built with Flutter that connects **patients** with **healthcare workers** in a streamlined, accessible way. Whether you're booking a consultation, messaging your doctor, or managing your health profile — AlagaHub brings it all into one place.
+
+> *"Alaga"* (Filipino) — to care for, to tend to, to look after.
+
+---
+
+## ✨ Features
+
+| Feature | Description |
+|---|---|
+| 🔐 **Authentication** | Phone number-based login with OTP verification via Firebase |
+| 👤 **Multi-role System** | Separate experiences for Patients, Healthcare Workers, and Admins |
+| 📅 **Appointment Booking** | Browse and book consultations with available healthcare workers |
+| 💬 **Real-time Messaging** | In-app inbox for patient-worker communication |
+| 💊 **Medicine Tab** | Track and manage medicine-related information |
+| 🔔 **Notifications** | Stay updated on appointments and messages |
+| 🌐 **Offline Support** | Connectivity-aware with background sync service |
+| 🌍 **Multi-language Ready** | Language selection support built in |
+
+---
+
+## 🏗️ Project Structure
+
+```
+alagahub/
+├── lib/
+│   ├── main.dart                  # App entry point
+│   ├── firebase_options.dart      # Firebase configuration
+│   ├── screens/
+│   │   ├── auth/                  # Login, OTP, Onboarding
+│   │   ├── registration/          # Multi-step registration flow
+│   │   ├── patient/               # Patient shell & tabs
+│   │   ├── worker/                # Healthcare worker shell & tabs
+│   │   ├── admin/                 # Admin shell
+│   │   └── settings/              # Account, help, language, notifications
+│   ├── services/
+│   │   ├── auth_service.dart
+│   │   ├── booking_service.dart
+│   │   ├── database_service.dart
+│   │   ├── firebase_service.dart
+│   │   ├── offline_sync_service.dart
+│   │   └── connectivity_service.dart
+│   ├── widgets/                   # Reusable UI components
+│   ├── utils/                     # Theme, router, helpers
+│   └── providers/                 # State management
+├── android/
+├── ios/
+├── pubspec.yaml
+└── firebase.json
+```
+
+---
+
+## 🚀 Getting Started
 
 ### Prerequisites
-- Flutter SDK 3.x+ → https://flutter.dev/docs/get-started/install
-- Android Studio (for Android emulator) or Xcode (for iOS)
-- VS Code with the **Flutter** and **Dart** extensions
 
-### 1. Open in VS Code
-```
-File → Open Folder → select this `alagahub` folder
-```
+- [Flutter SDK](https://docs.flutter.dev/get-started/install) (3.x or later)
+- [Dart](https://dart.dev/get-dart)
+- [Firebase CLI](https://firebase.google.com/docs/cli)
+- An Android or iOS device / emulator
 
-### 2. Run the error fixer
-Open a terminal in VS Code (`Ctrl+`` ` ```) and run:
+### Installation
+
+**1. Clone the repository**
 ```bash
-python fix_errors.py
+git clone https://github.com/zekeyell/AlagaHub.git
+cd AlagaHub
 ```
-This will:
-- Create the Flutter project structure (`flutter create .`)
-- Run `flutter pub get`
-- Apply `dart fix --apply`
-- Check Android permissions and build.gradle
-- Verify Firebase config files
 
-### 3. Run the app
+**2. Install dependencies**
+```bash
+flutter pub get
+```
+
+**3. Set up Firebase**
+
+> ⚠️ Firebase config files are excluded from this repo for security.
+
+- Go to [Firebase Console](https://console.firebase.google.com/)
+- Create a new project
+- Add Android and/or iOS apps
+- Download `google-services.json` → place in `android/app/`
+- Download `GoogleService-Info.plist` → place in `ios/Runner/`
+- Run `flutterfire configure` to generate `firebase_options.dart`
+
+**4. Run the app**
 ```bash
 flutter run
 ```
-Or press **F5** in VS Code with an emulator/device connected.
 
 ---
 
-## Demo Login (No Firebase Required)
+## 🔒 Security Notes
 
-The app ships with a **Demo Access panel** on the Login screen.
-Tap the yellow panel and choose:
-
-| Button | Role | Access |
-|--------|------|--------|
-| **Patient** | Pasyente | Home, Consultations, Medicine, Messages, Account |
-| **Worker** | Healthcare Worker | Dashboard, Patients, Consultations, Medicine, Messages |
-| **Admin** | System Admin | Dashboard, Users, Records, Content, Export |
-
-> Remove the Demo panel before production — it's clearly marked in `lib/screens/auth/login_screen.dart`.
-
----
-
-## Firebase Setup (OTP + Real-time Sync)
-
-1. Create a Firebase project at https://console.firebase.google.com
-2. Enable **Phone Authentication** (Authentication → Sign-in method → Phone)
-3. Enable **Cloud Firestore**
-4. Enable **Firebase Cloud Messaging**
-5. Download config files:
-   - **Android**: `google-services.json` → place in `android/app/`
-   - **iOS**: `GoogleService-Info.plist` → place in `ios/Runner/`
-6. In `lib/main.dart`, uncomment:
-   ```dart
-   await Firebase.initializeApp();
-   ```
-7. In `lib/services/auth_service.dart`, uncomment the `verifyPhone` method
-
----
-
-## Google Maps Setup
-
-1. Get an API key from https://console.cloud.google.com
-2. Enable **Maps SDK for Android** and **Maps SDK for iOS**
-3. Replace `YOUR_MAPS_API_KEY` in `android/app/src/main/AndroidManifest.xml`
-4. For iOS, add to `ios/Runner/AppDelegate.swift`:
-   ```swift
-   GMSServices.provideAPIKey("YOUR_MAPS_API_KEY")
-   ```
-
----
-
-## SMS Health Center Number
-
-Update the health center number in `lib/screens/patient/messages_tab.dart`:
-```dart
-const _healthCenterNumber = '+639XXXXXXXXXX'; // Replace with actual
-```
-
----
-
-## Project Structure
+The following files are **intentionally excluded** from this repository via `.gitignore`:
 
 ```
-lib/
-├── main.dart                          # App entry point
-├── utils/
-│   ├── app_router.dart                # All routes (go_router)
-│   ├── app_theme.dart                 # Colors, typography, components
-│   └── id_generator.dart              # RHC-*, CASE-*, MED-* IDs
-├── services/
-│   ├── auth_service.dart              # Firebase phone auth
-│   ├── database_service.dart          # SQLite offline DB
-│   ├── connectivity_service.dart      # Online/offline detection
-│   └── registration_provider.dart     # Registration state (Riverpod)
-├── screens/
-│   ├── auth/
-│   │   ├── splash_screen.dart         # S01 — Auto-redirect
-│   │   ├── onboarding_screen.dart     # S02 — 3 slides
-│   │   ├── login_screen.dart          # Login + Demo panel
-│   │   ├── phone_entry_screen.dart    # S03 — Phone input
-│   │   ├── otp_verification_screen.dart # S04 — OTP verify
-│   │   └── registration/
-│   │       ├── reg_step1_screen.dart  # S05 — Personal info
-│   │       ├── reg_step2_screen.dart  # S06 — Address
-│   │       ├── reg_step3_screen.dart  # S07 — Health profile
-│   │       ├── reg_step4_screen.dart  # S08 — Insurance
-│   │       └── reg_review_screen.dart # S09 — Review & submit
-│   ├── patient/
-│   │   ├── patient_shell.dart         # Bottom nav (5 tabs)
-│   │   ├── home_tab.dart              # S10 — Dashboard
-│   │   ├── consultations_tab.dart     # S11-S15 — Consultations
-│   │   ├── medicine_tab.dart          # S16-S20 — Medicine requests
-│   │   ├── messages_tab.dart          # S21 — Native SMS messages
-│   │   └── account_tab.dart          # S22 — Profile & records
-│   ├── worker/
-│   │   └── worker_shell.dart          # S23-S27 — Worker screens
-│   └── admin/
-│       └── admin_shell.dart           # S29-S33 — Admin drawer
-└── widgets/
-    ├── app_bar_widget.dart            # Consistent AppBar
-    ├── connectivity_banner.dart       # Online/offline/syncing banner
-    └── reg_progress_bar.dart          # Registration step indicator
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+firebase_options.dart
 ```
 
----
-
-## Architecture
-
-- **Offline-first**: All patient data saved to SQLite (sqflite). Auto-syncs to Firebase when online.
-- **Dual submission**: Every consultation/medicine request can be submitted online OR copied as SMS (no API cost).
-- **Native SMS**: Uses `url_launcher` to open device SMS app with pre-filled message — zero cost, works offline.
-- **State management**: Riverpod (`flutter_riverpod`) for all app state.
-- **Navigation**: `go_router` with role-based redirects.
-- **Authentication**: Firebase Phone Auth OTP + SharedPreferences session.
+Never commit these files. Add your own when setting up locally.
 
 ---
 
-## SDG Alignment
-- **SDG 3**: Good Health & Well-being
-- **SDG 10**: Reduced Inequalities
+## 🛠️ Built With
+
+- **[Flutter](https://flutter.dev/)** — UI framework
+- **[Firebase Auth](https://firebase.google.com/products/auth)** — Phone/OTP authentication
+- **[Firebase Realtime Database](https://firebase.google.com/products/realtime-database)** — Live data sync
+- **[Firebase Firestore](https://firebase.google.com/products/firestore)** — Structured data storage
+- **[Go Router](https://pub.dev/packages/go_router)** — Navigation & routing
 
 ---
 
-*AlagaHub v1.0 — Confidential Draft*
+## 🤝 Contributing
+
+Contributions, issues, and feature requests are welcome!
+
+1. Fork the project
+2. Create your branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+---
+
+## 👥 The Team
+
+AlagaHub was designed and developed by a group of 2nd Year BS Computer Science students from the **Technological University of the Philippines — Manila**.
+
+<div align="center">
+
+| | Name |
+|:---:|:---|
+| 🧑‍💻 | **Ezekiel Jairus Solitario** |
+| 🧑‍💻 | **Zendy Santos** |
+| 🧑‍💻 | **Jose Salvador Rentoria** |
+| 🧑‍💻 | **Nicole Drew Lazo** |
+| 🧑‍💻 | **Mitch Angela Maisog** |
+
+🏫 **Technological University of the Philippines — Manila**
+📚 BS Computer Science, 2nd Year
+
+</div>
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+---
+
+## 🌍 SDG Alignment
+
+AlagaHub is designed with the United Nations Sustainable Development Goals in mind:
+
+| Goal | Description |
+|---|---|
+| 🟢 **SDG 3: Good Health & Well-being** | Improves access to healthcare services by connecting patients directly with healthcare workers through a digital platform |
+| 🟠 **SDG 10: Reduced Inequalities** | Helps bridge the gap in healthcare access for underserved communities by making consultations and health services more reachable |
+
+---
+
+<div align="center">
+
+*Made with ❤️ and Flutter*
+
+<br/>
+
+**AlagaHub v1.0 — Confidential Draft**
+
+</div>
