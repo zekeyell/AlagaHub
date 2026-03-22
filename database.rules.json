@@ -1,0 +1,76 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "consultations": {
+      ".indexOn": [
+        "workerUid",
+        "patient_id",
+        "createdAt"
+      ],
+      "$caseId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "medicineRequests": {
+      ".indexOn": [
+        "workerUid",
+        "patient_id",
+        "createdAt"
+      ],
+      "$reqId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "patients": {
+      ".indexOn": [
+        "registeredAt"
+      ],
+      "$patId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "workers": {
+      ".indexOn": [
+        "barangay",
+        "city",
+        "region"
+      ],
+      "$wId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "conversations": {
+      ".indexOn": [
+        "workerUid",
+        "patientId"
+      ],
+      "$convId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "inbox": {
+      "$userId": {
+        ".read": "auth != null && auth.uid == $userId || auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "presence": {
+      "$userId": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid == $userId"
+      }
+    },
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    }
+  }
+}

@@ -1,0 +1,531 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:uuid/uuid.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:alagahub/utils/app_theme.dart';
+import 'package:alagahub/utils/lang.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:sqflite/sqflite.dart' as sqflite;
+import 'package:alagahub/services/database_service.dart';
+
+class MessagesTab extends ConsumerStatefulWidget {
+  const MessagesTab({super.key});
+  @override
+  ConsumerState<MessagesTab> createState() => _MessagesTabState();
+}
+
+class _MessagesTabState extends ConsumerState<MessagesTab> {
+  String _healthCenterNumber = '';
+  bool _loadingNumber = true;
+  bool _isOnline = false;
+  String _patientId = '';
+  String _patientName = '';
+  final _inputCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+  final _numberCtrl = TextEditingController();
+  StreamSubscription<DatabaseEvent>? _firebaseSub;
+  List<Map<String, dynamic>> _messages = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHealthCenterNumber();
+    _loadMessages();
+    _initConnectivity();
+    _listenToFirebaseMessages();
+  }
+
+  @override
+  void dispose() {
+    _firebaseSub?.cancel();
+    _inputCtrl.dispose();
+    _scrollCtrl.dispose();
+    _numberCtrl.dispose();
+    super.dispose();
+  }
+
+  // ── Connectivity + auto-sync ──────────────────────────────────────────
+  Future<void> _initConnectivity() async {
+    final prefs = await SharedPreferences.getInstance();
+    _patientName = prefs.getString('patient_name') ?? 'Patient';
+    final result = await Connectivity().checkConnectivity();
+    final online = !result.contains(ConnectivityResult.none);
+    if (mounted) setState(() => _isOnline = online);
+    if (online) _syncPendingToFirebase();
+
+    Connectivity().onConnectivityChanged.listen((result) {
+      final nowOnline = !result.contains(ConnectivityResult.none);
+      if (mounted) setState(() => _isOnline = nowOnline);
+      if (nowOnline) _syncPendingToFirebase();
+    });
+  }
+
+  Future<void> _syncPendingToFirebase() async {
+    if (_patientId.isEmpty) return;
+    try {
+      final db = await DatabaseService().database;
+      final pending = await db.query(
+        'messages',
+        where: 'patient_id = ? AND synced = 0 AND is_system = 0',
+        whereArgs: [_patientId],
+      );
+      for (final msg in pending) {
+        final ref = FirebaseDatabase.instance
+            .ref('messages/$_patientId')
+            .push();
+        await ref.set({
+          'id': msg['id'],
+          'patient_id': _patientId,
+          'patient_name': _patientName,
+          'sender': 'patient',
+          'content': msg['content'],
+          'sent_at': msg['sent_at'],
+          'is_system': 0,
+        });
+        await db.update('messages', {'synced': 1},
+            where: 'id = ?', whereArgs: [msg['id']]);
+      }
+      if (pending.isNotEmpty && mounted) {
+        final n = pending.length;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('$n message${n > 1 ? "s" : ""} synced to worker!'),
+          backgroundColor: AppTheme.primary,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    } catch (e) {
+      debugPrint('Sync error: $e');
+    }
+  }
+
+  // ── Real-time Firebase listener (worker replies + system messages) ───
+  void _listenToFirebaseMessages() {
+    // Wait until we have the patientId
+    SharedPreferences.getInstance().then((prefs) {
+      final pid = prefs.getString('patient_id') ?? '';
+      if (pid.isEmpty) return;
+      _patientId = pid;
+      _firebaseSub = FirebaseDatabase.instance
+          .ref('messages/\$pid')
+          .onValue
+          .listen((event) async {
+        if (!event.snapshot.exists || event.snapshot.value == null) return;
+        final raw = Map<String, dynamic>.from(event.snapshot.value as Map);
+        final db = await DatabaseService().database;
+        for (final entry in raw.entries) {
+          final m = Map<String, dynamic>.from(entry.value as Map? ?? {});
+          final msgId = m['id'] ?? entry.key;
+          // Upsert into local SQLite so it survives offline
+          await db.insert('messages', {
+            'id': msgId,
+            'patient_id': pid,
+            'sender': m['sender'] ?? 'worker',
+            'content': m['content'] ?? '',
+            'sent_at': m['sent_at'] ?? DateTime.now().toIso8601String(),
+            'is_system': m['is_system'] ?? 0,
+            'synced': 1,
+            'firebase_key': entry.key,
+          }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
+        }
+        if (mounted) await _loadMessages();
+        // Show snackbar for new worker/system messages
+        final systemMsgs = raw.values
+            .map((v) => Map<String, dynamic>.from(v as Map? ?? {}))
+            .where((m) =>
+                (m['sender'] == 'worker' || m['is_system'] == 1) &&
+                (m['sent_at'] ?? '').compareTo(
+                    DateTime.now().subtract(const Duration(seconds: 5))
+                        .toIso8601String()) > 0)
+            .toList();
+        if (systemMsgs.isNotEmpty && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: const Text('New message from your health worker!'),
+            backgroundColor: AppTheme.primary,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ));
+        }
+      });
+    });
+  }
+
+  // ── Health center number ──────────────────────────────────────────────
+  Future<void> _loadHealthCenterNumber() async {
+    final prefs = await SharedPreferences.getInstance();
+    var saved = prefs.getString('health_center_sms') ?? '';
+    if (saved.isNotEmpty) {
+      if (!saved.startsWith('+')) saved = '+$saved';
+      if (mounted) setState(() { _healthCenterNumber = saved; _loadingNumber = false; });
+      return;
+    }
+    try {
+      final snap = await FirebaseDatabase.instance.ref('settings/smsNumber').get();
+      if (snap.exists && snap.value != null) {
+        var num = snap.value.toString().trim().replaceAll(' ', '');
+        if (!num.startsWith('+')) num = '+$num';
+        await prefs.setString('health_center_sms', num);
+        if (mounted) setState(() { _healthCenterNumber = num; _loadingNumber = false; });
+        return;
+      }
+    } catch (e) { debugPrint('SMS number load: $e'); }
+    if (mounted) setState(() => _loadingNumber = false);
+  }
+
+  Future<void> _saveNumber(String number) async {
+    var n = number.trim().replaceAll(' ', '');
+    if (n.isNotEmpty && !n.startsWith('+')) n = '+$n';
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('health_center_sms', n);
+    try { await FirebaseDatabase.instance.ref('settings/smsNumber').set(n); } catch (_) {}
+    if (mounted) setState(() => _healthCenterNumber = n);
+  }
+
+  // ── Messages ──────────────────────────────────────────────────────────
+  Future<void> _loadMessages() async {
+    final prefs = await SharedPreferences.getInstance();
+    _patientId = prefs.getString('patient_id') ?? '';
+    final msgs = await DatabaseService().getMessages(_patientId);
+    if (!mounted) return;
+    setState(() => _messages = msgs);
+    if (_messages.isEmpty) {
+      final s = S(ref.read(langProvider));
+      await DatabaseService().insertMessage({
+        'id': const Uuid().v4(),
+        'patient_id': _patientId,
+        'sender': 'system',
+        'content': s.isEn
+            ? 'Welcome to AlagaHub Messaging!\n\nOnline: messages sync to your health worker instantly.\nOffline: tap Send to open your SMS app, then syncs when back online.'
+            : 'Maligayang pagdating sa AlagaHub Messaging!\n\nOnline: natatanggap agad ng worker ang mensahe.\nOffline: i-tap ang Send para buksan ang SMS app, masi-sync kapag may koneksyon.',
+        'sent_at': DateTime.now().toIso8601String(),
+        'is_system': 1,
+        'synced': 1,
+      });
+      _loadMessages();
+    }
+  }
+
+  // ── Send ──────────────────────────────────────────────────────────────
+  Future<void> _sendViaSms() async {
+    final text = _inputCtrl.text.trim();
+    if (text.isEmpty) return;
+    if (_healthCenterNumber.isEmpty) { _showSetNumberDialog(); return; }
+
+    final encoded = Uri.encodeComponent(text);
+    bool opened = false;
+    try {
+      opened = await launchUrl(
+        Uri.parse('sms:$_healthCenterNumber?body=$encoded'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {}
+    if (!opened) {
+      try {
+        opened = await launchUrl(
+          Uri.parse('sms:$_healthCenterNumber'),
+          mode: LaunchMode.externalApplication,
+        );
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+
+    if (opened) {
+      final msgId = const Uuid().v4();
+      final now = DateTime.now().toIso8601String();
+      await DatabaseService().insertMessage({
+        'id': msgId,
+        'patient_id': _patientId,
+        'sender': 'patient',
+        'content': text,
+        'sent_at': now,
+        'is_system': 0,
+        'synced': 0,
+      });
+      // Sync to Firebase immediately if online
+      if (_isOnline) _syncPendingToFirebase();
+      _inputCtrl.clear();
+      await _loadMessages();
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (_scrollCtrl.hasClients) {
+          _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+        }
+      });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Hindi ma-open ang SMS app.'),
+        backgroundColor: AppTheme.error,
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+  }
+
+  void _pasteSummary() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final s = S(ref.read(langProvider));
+    if (data?.text != null && data!.text!.isNotEmpty) {
+      _inputCtrl.text = data.text!;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(s.isEn ? 'Summary pasted!' : 'Na-paste ang summary!'),
+        backgroundColor: AppTheme.primary, behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2)));
+    } else {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(s.isEn ? 'Nothing in clipboard.' : 'Walang makita sa clipboard.'),
+        behavior: SnackBarBehavior.floating, duration: const Duration(seconds: 2)));
+    }
+  }
+
+  void _showSetNumberDialog() {
+    _numberCtrl.text = _healthCenterNumber;
+    final s = S(ref.read(langProvider));
+    showDialog(context: context, builder: (_) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Text(s.isEn ? 'Health Center Number' : 'Numero ng Health Center',
+          style: const TextStyle(fontWeight: FontWeight.w700)),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(s.isEn ? 'Enter the health center mobile number.' : 'Ilagay ang numero ng health center.',
+            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+        const SizedBox(height: 16),
+        TextField(controller: _numberCtrl, keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(labelText: '+639XXXXXXXXX',
+            prefixIcon: Icon(Icons.phone_rounded, color: AppTheme.primary))),
+      ]),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel', style: TextStyle(color: AppTheme.textSecondary))),
+        ElevatedButton(
+          onPressed: () async {
+            final num = _numberCtrl.text.trim();
+            if (num.isEmpty) return;
+            Navigator.pop(context);
+            await _saveNumber(num);
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(s.isEn ? 'Number saved!' : 'Na-save ang numero!'),
+              backgroundColor: AppTheme.primary, behavior: SnackBarBehavior.floating));
+          },
+          style: ElevatedButton.styleFrom(minimumSize: const Size(80, 36)),
+          child: Text(s.isEn ? 'Save' : 'I-save'),
+        ),
+      ],
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = S(ref.watch(langProvider));
+    final numberSet = _healthCenterNumber.isNotEmpty;
+
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      appBar: AppBar(
+        backgroundColor: Colors.white, surfaceTintColor: Colors.transparent,
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(s.mensahe, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          Text(
+            _loadingNumber ? '...' : numberSet ? _healthCenterNumber
+                : (s.isEn ? 'Tap gear to set number' : 'I-tap ang gear para itakda ang numero'),
+            style: TextStyle(fontSize: 11,
+                color: numberSet ? AppTheme.textSecondary : AppTheme.accent)),
+        ]),
+        actions: [
+          IconButton(icon: const Icon(Icons.settings_rounded, size: 20),
+              onPressed: _showSetNumberDialog),
+          // Online/offline indicator
+          Container(
+            margin: const EdgeInsets.only(right: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+                color: _isOnline ? AppTheme.primaryLight : AppTheme.accentLight,
+                borderRadius: BorderRadius.circular(20)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(width: 6, height: 6,
+                  decoration: BoxDecoration(
+                      color: _isOnline ? AppTheme.primary : AppTheme.accent,
+                      shape: BoxShape.circle)),
+              const SizedBox(width: 4),
+              Text(_isOnline ? 'Online' : 'Offline',
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
+                      color: _isOnline ? AppTheme.primaryDark : AppTheme.accent)),
+            ]),
+          ),
+        ],
+      ),
+      body: Column(children: [
+        // Status banner
+        Container(
+          color: _isOnline ? const Color(0xFFF0FDF4) : const Color(0xFFFFFBEB),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+          child: Row(children: [
+            Icon(_isOnline ? Icons.cloud_done_rounded : Icons.sms_rounded,
+                size: 13, color: _isOnline ? AppTheme.primary : AppTheme.accent),
+            const SizedBox(width: 8),
+            Expanded(child: Text(
+              _isOnline
+                  ? (s.isEn ? 'Online — messages sync to worker instantly' : 'Online — natatanggap agad ng worker ang mensahe')
+                  : (s.isEn ? 'Offline — tap Send to open SMS app, syncs when online' : 'Offline — i-tap Send para sa SMS, masi-sync kapag online'),
+              style: TextStyle(fontSize: 11,
+                  color: _isOnline ? AppTheme.primaryDark : const Color(0xFF92400E)),
+            )),
+          ]),
+        ),
+        if (!_loadingNumber && !numberSet)
+          GestureDetector(
+            onTap: _showSetNumberDialog,
+            child: Container(
+              color: const Color(0xFFFEF3C7),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(children: [
+                const Icon(Icons.warning_amber_rounded, size: 14, color: AppTheme.accent),
+                const SizedBox(width: 8),
+                Expanded(child: Text(
+                  s.isEn ? 'SMS number not set — tap to configure' : 'Hindi pa naka-set ang numero — i-tap para itakda',
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF92400E)))),
+                const Icon(Icons.chevron_right_rounded, size: 14, color: AppTheme.accent),
+              ]),
+            ),
+          ),
+
+        Expanded(child: _messages.isEmpty
+            ? const Center(child: CircularProgressIndicator())
+            : ListView.builder(
+                controller: _scrollCtrl,
+                padding: const EdgeInsets.all(16),
+                itemCount: _messages.length,
+                itemBuilder: (_, i) => _MessageBubble(_messages[i]),
+              )),
+
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+          child: SafeArea(top: false, child: Column(children: [
+            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Expanded(child: TextField(
+                controller: _inputCtrl, maxLines: 4, minLines: 1,
+                style: const TextStyle(fontSize: 14),
+                decoration: InputDecoration(
+                  hintText: s.isEn ? 'Type or paste message...' : 'I-type o i-paste ang mensahe...',
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(24),
+                      borderSide: const BorderSide(color: AppTheme.divider)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(24),
+                      borderSide: const BorderSide(color: AppTheme.divider)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(24),
+                      borderSide: const BorderSide(color: AppTheme.primary, width: 2)),
+                ),
+              )),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: _sendViaSms,
+                child: Container(
+                  width: 46, height: 46,
+                  decoration: BoxDecoration(
+                      color: _isOnline ? AppTheme.primary : AppTheme.accent,
+                      shape: BoxShape.circle),
+                  child: Icon(_isOnline ? Icons.send_rounded : Icons.sms_rounded,
+                      color: Colors.white, size: 20),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            SizedBox(width: double.infinity, child: OutlinedButton.icon(
+              onPressed: _pasteSummary,
+              style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  minimumSize: Size.zero,
+                  textStyle: const TextStyle(fontSize: 13)),
+              icon: const Icon(Icons.content_paste_rounded, size: 16),
+              label: Text(s.isEn ? 'Paste Summary' : 'I-paste ang Summary'),
+            )),
+          ])),
+        ),
+      ]),
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  final Map<String, dynamic> data;
+  const _MessageBubble(this.data);
+
+  @override
+  Widget build(BuildContext context) {
+    final isPatient = data['sender'] == 'patient';
+    final isSystem = data['is_system'] == 1;
+    final isSynced = (data['synced'] ?? 1) == 1;
+    final time = DateFormat('h:mm a').format(
+        DateTime.tryParse(data['sent_at'] ?? '') ?? DateTime.now());
+
+    if (isSystem) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Center(child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(color: AppTheme.divider,
+              borderRadius: BorderRadius.circular(20)),
+          child: Text(data['content'] ?? '', textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+        )),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisAlignment: isPatient ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (!isPatient) ...[
+            Container(width: 32, height: 32,
+                decoration: BoxDecoration(color: AppTheme.primaryLight,
+                    borderRadius: BorderRadius.circular(16)),
+                child: const Icon(Icons.local_hospital_rounded, size: 16, color: AppTheme.primary)),
+            const SizedBox(width: 8),
+          ],
+          Flexible(child: Column(
+            crossAxisAlignment: isPatient ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: isPatient ? AppTheme.primary : Colors.white,
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(18), topRight: const Radius.circular(18),
+                    bottomLeft: Radius.circular(isPatient ? 18 : 4),
+                    bottomRight: Radius.circular(isPatient ? 4 : 18),
+                  ),
+                  border: isPatient ? null : Border.all(color: AppTheme.divider),
+                ),
+                child: Text(data['content'] ?? '',
+                    style: TextStyle(color: isPatient ? Colors.white : AppTheme.textPrimary,
+                        fontSize: 14, height: 1.4)),
+              ),
+              const SizedBox(height: 3),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(time, style: const TextStyle(fontSize: 10, color: AppTheme.textHint)),
+                if (isPatient) ...[
+                  const SizedBox(width: 4),
+                  Icon(isSynced ? Icons.cloud_done_rounded : Icons.schedule_rounded,
+                      size: 11, color: isSynced ? AppTheme.primary : AppTheme.textHint),
+                  const SizedBox(width: 2),
+                  Text(isSynced ? 'Synced' : 'Pending',
+                      style: TextStyle(fontSize: 9,
+                          color: isSynced ? AppTheme.primary : AppTheme.textHint)),
+                ],
+              ]),
+            ],
+          )),
+        ],
+      ),
+    );
+  }
+}

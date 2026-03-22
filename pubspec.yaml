@@ -1,0 +1,70 @@
+name: alagahub
+description: AlagaHub - Rural Health Connect. Healthcare kahit saan.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Navigation
+  go_router: ^14.6.3
+
+  # Local Storage (offline cache)
+  sqflite: ^2.3.3
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  shared_preferences: ^2.3.3
+
+  # Firebase
+  firebase_core: ^3.8.1
+  firebase_auth: ^5.3.4
+  firebase_database: ^11.1.6
+  firebase_storage: ^12.3.7
+
+  # SMS / URL Launcher
+  url_launcher: ^6.3.1
+
+  # Maps
+  google_maps_flutter: ^2.9.0
+
+  # UI & Icons
+  cupertino_icons: ^1.0.8
+  flutter_svg: ^2.0.10+1
+  cached_network_image: ^3.4.1
+  shimmer: ^3.0.0
+
+  # Utilities
+  intl: ^0.20.2
+  uuid: ^4.5.1
+  connectivity_plus: ^6.1.3
+  image_picker: ^1.1.2
+  permission_handler: ^11.3.1
+  pin_code_fields: ^8.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.13
+  riverpod_generator: ^2.4.3
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/fonts/
+    - assets/images/
+
+  fonts:
+    - family: Garet
+      fonts:
+        - asset: assets/fonts/Garet-Book.ttf
+        - asset: assets/fonts/Garet-Heavy.ttf
+          weight: 700

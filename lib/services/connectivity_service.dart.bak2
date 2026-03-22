@@ -1,0 +1,56 @@
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:alagahub/services/sync_service.dart';
+
+enum ConnectivityStatus { online, offline, syncing }
+
+final connectivityProvider = StreamProvider<ConnectivityStatus>((ref) async* {
+  // Check initial
+  final initial = await Connectivity().checkConnectivity();
+  if (initial.contains(ConnectivityResult.none)) {
+    yield ConnectivityStatus.offline;
+  } else {
+    yield ConnectivityStatus.online;
+    _updatePresence(true);
+    SyncService.instance.runSync();
+  }
+
+  await for (final result in Connectivity().onConnectivityChanged) {
+    if (result.contains(ConnectivityResult.none)) {
+      _updatePresence(false);
+      yield ConnectivityStatus.offline;
+    } else {
+      yield ConnectivityStatus.syncing;
+      _updatePresence(true);
+      // Run sync when back online
+      await SyncService.instance.runSync();
+      await Future.delayed(const Duration(seconds: 1));
+      yield ConnectivityStatus.online;
+    }
+  }
+});
+
+Future<void> _updatePresence(bool isOnline) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getString('patient_id') ?? prefs.getString('user_id');
+    if (userId == null || userId.isEmpty) return;
+    final ref = FirebaseDatabase.instance.ref('presence/$userId');
+    if (isOnline) {
+      await ref.set({
+        'online': true,
+        'role': prefs.getString('user_role') ?? 'patient',
+        'last_seen': DateTime.now().toIso8601String(),
+      });
+      await ref.child('online').onDisconnect().set(false);
+      await ref.child('last_seen').onDisconnect().set(ServerValue.timestamp);
+    } else {
+      await ref.update({
+        'online': false,
+        'last_seen': DateTime.now().toIso8601String(),
+      });
+    }
+  } catch (_) {}
+}

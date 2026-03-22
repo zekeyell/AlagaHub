@@ -1,0 +1,428 @@
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+
+class DatabaseService {
+  static final DatabaseService _instance = DatabaseService._internal();
+  factory DatabaseService() => _instance;
+  DatabaseService._internal();
+
+  Database? _database;
+
+  Future<Database> get database async {
+    _database ??= await _initDatabase();
+    return _database!;
+  }
+
+  Future<Database> _initDatabase() async {
+    final dbPath = await getDatabasesPath();
+    return openDatabase(
+      join(dbPath, 'alagahub.db'),
+      version: 5,
+      onCreate: _createTables,
+      onUpgrade: _onUpgrade,
+    );
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Add synced column to messages if it doesn't exist
+      try {
+        await db.execute(
+            'ALTER TABLE messages ADD COLUMN synced INTEGER DEFAULT 0');
+      } catch (_) {}
+    }
+    if (oldVersion < 4) {
+      for (final col in [
+        'ALTER TABLE consultations ADD COLUMN worker_name TEXT',
+        'ALTER TABLE consultations ADD COLUMN worker_phone TEXT',
+        'ALTER TABLE consultations ADD COLUMN offline_source INTEGER DEFAULT 0',
+      ]) {
+        try { await db.execute(col); } catch (_) {}
+      }
+    }
+    if (oldVersion < 3) {
+      for (final col in [
+        'ALTER TABLE consultations ADD COLUMN patient_uid TEXT',
+        'ALTER TABLE consultations ADD COLUMN patient_name TEXT',
+        'ALTER TABLE consultations ADD COLUMN barangay TEXT',
+        'ALTER TABLE consultations ADD COLUMN is_synced INTEGER DEFAULT 0',
+      ]) {
+        try { await db.execute(col); } catch (_) {}
+      }
+      for (final col in [
+        'ALTER TABLE medicine_requests ADD COLUMN patient_uid TEXT',
+        'ALTER TABLE medicine_requests ADD COLUMN patient_name TEXT',
+        'ALTER TABLE medicine_requests ADD COLUMN barangay TEXT',
+        'ALTER TABLE medicine_requests ADD COLUMN is_free INTEGER DEFAULT 0',
+        'ALTER TABLE medicine_requests ADD COLUMN is_synced INTEGER DEFAULT 0',
+      ]) {
+        try { await db.execute(col); } catch (_) {}
+      }
+    }
+    if (oldVersion < 4) {
+      for (final col in [
+        'ALTER TABLE consultations ADD COLUMN worker_name TEXT',
+        'ALTER TABLE consultations ADD COLUMN worker_phone TEXT',
+        'ALTER TABLE consultations ADD COLUMN offline_source INTEGER DEFAULT 0',
+      ]) {
+        try { await db.execute(col); } catch (_) {}
+      }
+    }
+    if (oldVersion < 5) {
+      // Create workers table for devices that upgraded before it was added
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS workers (
+            uid TEXT PRIMARY KEY,
+            full_name TEXT,
+            phone TEXT,
+            barangay TEXT,
+            city TEXT,
+            region TEXT,
+            health_center TEXT,
+            cached_at TEXT
+          )
+        ''');
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _createTables(Database db, int version) async {
+    await db.execute('''
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        phone TEXT NOT NULL,
+        role TEXT NOT NULL,
+        first_name TEXT,
+        last_name TEXT,
+        middle_name TEXT,
+        birthdate TEXT,
+        sex TEXT,
+        civil_status TEXT,
+        barangay TEXT,
+        city TEXT,
+        province TEXT,
+        region TEXT,
+        blood_type TEXT,
+        allergies TEXT,
+        conditions TEXT,
+        medications TEXT,
+        family_history TEXT,
+        emergency_contact_name TEXT,
+        emergency_contact_phone TEXT,
+        emergency_contact_relation TEXT,
+        philhealth_number TEXT,
+        hmo_name TEXT,
+        hmo_id TEXT,
+        patient_id TEXT,
+        health_center TEXT,
+        created_at TEXT,
+        synced INTEGER DEFAULT 0
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE consultations (
+        id TEXT PRIMARY KEY,
+        case_id TEXT UNIQUE,
+        patient_uid TEXT,
+        patient_id TEXT NOT NULL,
+        patient_name TEXT,
+        barangay TEXT,
+        symptoms TEXT,
+        temperature REAL,
+        pain_level INTEGER,
+        duration TEXT,
+        notes TEXT,
+        type TEXT,
+        preferred_date TEXT,
+        preferred_time TEXT,
+        health_center TEXT,
+        status TEXT DEFAULT 'pending',
+        worker_notes TEXT,
+        created_at TEXT,
+        updated_at TEXT,
+        synced INTEGER DEFAULT 0,
+        is_synced INTEGER DEFAULT 0,
+        worker_name TEXT,
+        worker_phone TEXT,
+        offline_source INTEGER DEFAULT 0
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE medicine_requests (
+        id TEXT PRIMARY KEY,
+        request_id TEXT UNIQUE,
+        patient_uid TEXT,
+        patient_id TEXT NOT NULL,
+        patient_name TEXT,
+        barangay TEXT,
+        medicine_name TEXT NOT NULL,
+        generic_name TEXT,
+        quantity INTEGER,
+        type TEXT,
+        is_free INTEGER DEFAULT 0,
+        price REAL DEFAULT 0,
+        delivery_method TEXT,
+        delivery_address TEXT,
+        health_center TEXT,
+        status TEXT DEFAULT 'pending',
+        created_at TEXT,
+        updated_at TEXT,
+        synced INTEGER DEFAULT 0,
+        is_synced INTEGER DEFAULT 0
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE messages (
+        id TEXT PRIMARY KEY,
+        patient_id TEXT,
+        sender TEXT,
+        content TEXT,
+        sent_at TEXT,
+        is_system INTEGER DEFAULT 0,
+        synced INTEGER DEFAULT 0,
+        firebase_key TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE workers (
+        uid TEXT PRIMARY KEY,
+        full_name TEXT,
+        phone TEXT,
+        barangay TEXT,
+        city TEXT,
+        region TEXT,
+        health_center TEXT,
+        cached_at TEXT
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE health_tips (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        category TEXT,
+        preview TEXT,
+        content TEXT,
+        image_url TEXT,
+        author_id TEXT,
+        published_at TEXT,
+        cached_at TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE bookings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        booking_id TEXT UNIQUE,
+        type TEXT,
+        reference_id TEXT,
+        status TEXT DEFAULT 'Pending',
+        patient_id TEXT,
+        worker_uid TEXT,
+        created_at TEXT,
+        synced INTEGER DEFAULT 0
+      );
+      CREATE TABLE announcements (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        description TEXT,
+        event_date TEXT,
+        health_center TEXT,
+        published_at TEXT,
+        cached_at TEXT
+      )
+    ''');
+  }
+
+  // ── Consultation CRUD ──────────────────────────────────────────────
+  Future<void> updateConsultationStatus(String id, String status) async {
+    final db = await database;
+    await db.update(
+      'consultations',
+      {'status': status, 'updated_at': DateTime.now().toIso8601String()},
+      where: 'id = ? OR case_id = ?',
+      whereArgs: [id, id],
+    );
+  }
+
+  Future<int> insertConsultation(Map<String, dynamic> data) async {
+    final db = await database;
+    return db.insert('consultations', data, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Map<String, dynamic>>> getAllConsultations() async {
+    final db = await database;
+    return db.query('consultations', orderBy: 'created_at DESC');
+  }
+
+  Future<List<Map<String, dynamic>>> getConsultations(String patientId) async {
+    final db = await database;
+    final rows = await db.query(
+        'consultations', where: 'patient_id = ?',
+        whereArgs: [patientId], orderBy: 'created_at DESC');
+    // Normalise status to Title Case — SQLite default is 'pending' (lowercase)
+    return rows.map((r) {
+      final m = Map<String, dynamic>.from(r);
+      final raw = (m['status'] ?? 'Pending').toString();
+      // Preserve compound statuses (e.g. Offline-Pending) exactly;
+      // only normalise plain single-word statuses.
+      m['status'] = raw.isEmpty
+          ? 'Pending'
+          : raw.contains('-')
+              ? raw  // keep as-is: Offline-Pending etc.
+              : raw[0].toUpperCase() + raw.substring(1).toLowerCase();
+      return m;
+    }).toList();
+  }
+
+  // ── Medicine Request CRUD ──────────────────────────────────────────
+  Future<int> insertMedicineRequest(Map<String, dynamic> data) async {
+    final db = await database;
+    return db.insert('medicine_requests', data, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> updateMedicineRequestStatus(String id, String status) async {
+    final db = await database;
+    await db.update('medicine_requests', {'status': status},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<List<Map<String, dynamic>>> getMedicineRequests(String patientId) async {
+    final db = await database;
+    return db.query('medicine_requests', where: 'patient_id = ?', whereArgs: [patientId], orderBy: 'created_at DESC');
+  }
+
+  // ── Messages ──────────────────────────────────────────────────────
+  Future<int> insertMessage(Map<String, dynamic> data) async {
+    final db = await database;
+    return db.insert('messages', data, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Map<String, dynamic>>> getUnsyncedMessages(String patientId) async {
+    final db = await database;
+    return db.query('messages',
+        where: 'patient_id = ? AND synced = 0 AND is_system = 0',
+        whereArgs: [patientId],
+        orderBy: 'sent_at ASC');
+  }
+
+  Future<void> markMessageSynced(String id, String firebaseKey) async {
+    final db = await database;
+    await db.update('messages',
+        {'synced': 1, 'firebase_key': firebaseKey},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<List<Map<String, dynamic>>> getMessages(String patientId) async {
+    final db = await database;
+    return db.query('messages', where: 'patient_id = ?', whereArgs: [patientId], orderBy: 'sent_at ASC');
+  }
+
+  // ── Health Tips ────────────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getCachedHealthTips() async {
+    final db = await database;
+    return db.query('health_tips', orderBy: 'published_at DESC', limit: 20);
+  }
+
+  Future<void> cacheHealthTips(List<Map<String, dynamic>> tips) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final tip in tips) {
+      batch.insert('health_tips', tip, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit();
+  }
+
+  // ── Announcements ──────────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getCachedAnnouncements() async {
+    final db = await database;
+    return db.query('announcements', orderBy: 'published_at DESC', limit: 10);
+  }
+
+  // ── Unsynced records ──────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getUnsyncedConsultations() async {
+    final db = await database;
+    return db.query('consultations', where: 'synced = 0');
+  }
+
+  Future<List<Map<String, dynamic>>> getUnsyncedMedicineRequests() async {
+    final db = await database;
+    return db.query('medicine_requests', where: 'synced = 0');
+  }
+
+  Future<void> markConsultationSynced(String id) async {
+    final db = await database;
+    await db.update('consultations', {'synced': 1, 'is_synced': 1},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> markMedicineRequestSynced(String id) async {
+    final db = await database;
+    await db.update('medicine_requests', {'synced': 1, 'is_synced': 1},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+
+  // ── Workers (offline cache) ────────────────────────────────────────
+  Future<void> cacheWorkers(List<Map<String, dynamic>> workers) async {
+    final db = await database;
+    final batch = db.batch();
+    final now = DateTime.now().toIso8601String();
+    for (final w in workers) {
+      batch.insert('workers', {
+        'uid': w['uid'] ?? w['id'] ?? '',
+        'full_name': w['fullName'] ?? w['firstName'] ?? '',
+        'phone': w['phone'] ?? '',
+        'barangay': (w['barangay'] ?? '').toString().toLowerCase(),
+        'city': (w['city'] ?? '').toString().toLowerCase(),
+        'region': (w['region'] ?? '').toString().toLowerCase(),
+        'health_center': w['health_center'] ?? w['healthCenter'] ?? '',
+        'cached_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit();
+  }
+
+  Future<Map<String, dynamic>?> findNearestWorkerOffline({
+    required String barangay,
+    required String city,
+    required String region,
+  }) async {
+    final db = await database;
+    final b = barangay.toLowerCase();
+    final c = city.toLowerCase();
+    final r = region.toLowerCase();
+
+    // Priority: same barangay > same city > same region > any
+    for (final where in [
+      'barangay = ?',
+      'city = ?',
+      'region = ?',
+      '1=1',
+    ]) {
+      final arg = where == 'barangay = ?' ? b
+                : where == 'city = ?'     ? c
+                : where == 'region = ?'   ? r
+                : null;
+      final rows = await db.query('workers',
+        where: where, whereArgs: arg != null ? [arg] : null, limit: 1);
+      if (rows.isNotEmpty) {
+        return rows.first;
+      }
+    }
+    return null;
+  }
+
+  Future<List<Map<String, dynamic>>> getAllCachedWorkers() async {
+    final db = await database;
+    return db.query('workers');
+  }
+  Future<void> markSynced(String table, String id) async {
+    final db = await database;
+    await db.update(table, {'synced': 1}, where: 'id = ?', whereArgs: [id]);
+  }
+}

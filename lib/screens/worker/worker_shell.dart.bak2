@@ -1,0 +1,1831 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:alagahub/utils/app_theme.dart';
+import 'package:intl/intl.dart';
+import 'package:alagahub/utils/lang.dart';
+import 'package:alagahub/widgets/connectivity_banner.dart';
+import 'package:alagahub/services/booking_service.dart';
+import 'package:alagahub/widgets/logout_dialog.dart';
+import 'package:alagahub/services/database_service.dart';
+
+// ── Blue palette for worker ──────────────────────────────────────────────
+const _blue     = Color(0xFF2563EB);
+const _blueDark = Color(0xFF1D4ED8);
+const _blueLight = Color(0xFFDBEAFE);
+const _blueSoft = Color(0xFFEFF6FF);
+
+// ── Providers ────────────────────────────────────────────────────────────
+final workerPatientsProvider =
+    StreamProvider<List<Map<String, dynamic>>>((ref) {
+  return FirebaseDatabase.instance.ref('patients').onValue.map((e) {
+    if (!e.snapshot.exists || e.snapshot.value == null) return [];
+    final data = Map<String, dynamic>.from(e.snapshot.value as Map);
+    return data.entries
+        .map((entry) {
+          final p = Map<String, dynamic>.from(entry.value as Map);
+          p['id'] = entry.key;
+          return p;
+        })
+        .where((p) => (p['role'] ?? 'patient') == 'patient')
+        .toList()
+      ..sort((a, b) =>
+          (b['registeredAt'] ?? '').compareTo(a['registeredAt'] ?? ''));
+  });
+});
+
+final workerMedicineProvider =
+    StreamProvider<List<Map<String, dynamic>>>((ref) {
+  return FirebaseDatabase.instance.ref('medicineRequests').onValue.map((e) {
+    if (!e.snapshot.exists || e.snapshot.value == null) return [];
+    final data = Map<String, dynamic>.from(e.snapshot.value as Map);
+    return data.values
+        .map((v) => Map<String, dynamic>.from(v as Map))
+        .toList()
+      ..sort((a, b) =>
+          (b['createdAt'] ?? b['created_at'] ?? '')
+          .compareTo(a['createdAt'] ?? a['created_at'] ?? ''));
+  });
+});
+
+final workerBookingsProvider = StreamProvider.family<List<Map<String, dynamic>>, String>((ref, workerUid) {
+  return BookingService().watchWorkerBookings(workerUid);
+});
+
+final workerNotifProvider = StreamProvider.family<List<Map<String, dynamic>>, String>((ref, workerUid) {
+  return BookingService().watchWorkerNotifications(workerUid);
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Shell
+// ══════════════════════════════════════════════════════════════════════════
+class WorkerShell extends ConsumerStatefulWidget {
+  const WorkerShell({super.key});
+  @override
+  ConsumerState<WorkerShell> createState() => _WorkerShellState();
+}
+
+class _WorkerShellState extends ConsumerState<WorkerShell> {
+  int _tab = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = S(ref.watch(langProvider));
+    final tabs = [
+      const _WorkerDashboard(),
+      const _WorkerPatients(),
+      const _WorkerBookings(),
+      const _WorkerMessages(),
+      const _WorkerProfile(),
+    ];
+
+    return Scaffold(
+      body: Column(children: [
+        const ConnectivityBanner(),
+        Expanded(child: tabs[_tab]),
+      ]),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _tab,
+        onTap: (i) => setState(() => _tab = i),
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: _blue,
+        unselectedItemColor: AppTheme.textHint,
+        backgroundColor: Colors.white,
+        elevation: 12,
+        selectedLabelStyle:
+            const TextStyle(fontWeight: FontWeight.w700, fontSize: 10),
+        unselectedLabelStyle: const TextStyle(fontSize: 10),
+        items: [
+          BottomNavigationBarItem(
+              icon: const Icon(Icons.dashboard_rounded),
+              label: s.dashboard),
+          BottomNavigationBarItem(
+              icon: const Icon(Icons.people_rounded),
+              label: s.mgaPasyente),
+          BottomNavigationBarItem(
+              icon: const Icon(Icons.book_online_rounded),
+              label: s.isEn ? 'Bookings' : 'Bookings'),
+          BottomNavigationBarItem(
+              icon: const Icon(Icons.chat_bubble_rounded),
+              label: s.mensahe),
+          BottomNavigationBarItem(
+              icon: const Icon(Icons.person_rounded),
+              label: s.isEn ? 'Profile' : 'Profile'),
+        ],
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Dashboard
+// ══════════════════════════════════════════════════════════════════════════
+class _WorkerDashboard extends ConsumerWidget {
+  const _WorkerDashboard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = S(ref.watch(langProvider));
+    final patientsAsync = ref.watch(workerPatientsProvider);
+    final patientCount =
+        patientsAsync.whenOrNull(data: (d) => d.length) ?? 0;
+
+    return Scaffold(
+      backgroundColor: _blueSoft,
+      body: FutureBuilder<SharedPreferences>(
+        future: SharedPreferences.getInstance(),
+        builder: (_, snap) {
+          final name =
+              snap.data?.getString('patient_name') ?? 'Health Worker';
+          final barangay =
+              snap.data?.getString('patient_barangay') ?? 'Barangay';
+
+          return CustomScrollView(slivers: [
+            // ── White App Bar (matches patient) ──────────────────────
+            SliverAppBar(
+              floating: true, snap: true, pinned: false,
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.transparent, elevation: 0,
+              title: Row(children: [
+                Container(
+                  width: 36, height: 36,
+                  decoration: BoxDecoration(
+                    color: _blue,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(5),
+                    child: Image.asset(
+                      'assets/images/logo.png',
+                      color: Colors.white,
+                      colorBlendMode: BlendMode.srcIn,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Text('AlagaHub', style: TextStyle(
+                    fontSize: 20, fontWeight: FontWeight.w800,
+                    color: Color(0xFF1E293B))),
+              ]),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.notifications_outlined,
+                      color: Color(0xFF1E293B)),
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('No new notifications'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(width: 4),
+              ],
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(1),
+                child: Container(height: 1, color: const Color(0xFFE2E8F0)),
+              ),
+            ),
+
+            // ── Blue gradient greeting header ─────────────────────────
+            SliverToBoxAdapter(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [_blue, _blueDark],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 44),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  // Greeting
+                  Row(children: [
+                    Expanded(child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Text(s.isEn ? 'Good day,' : 'Kumusta,',
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.8),
+                              fontSize: 14)),
+                      const SizedBox(height: 2),
+                      Text(name, style: const TextStyle(
+                          color: Colors.white, fontSize: 22,
+                          fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(20)),
+                        child: Row(mainAxisSize: MainAxisSize.min,
+                            children: [
+                          const Icon(Icons.medical_services_rounded,
+                              size: 12, color: Colors.white),
+                          const SizedBox(width: 4),
+                          Text(s.isEn ? 'Healthcare Worker' : 'Health Worker',
+                              style: const TextStyle(color: Colors.white,
+                                  fontSize: 11, fontWeight: FontWeight.w600)),
+                        ]),
+                      ),
+                    ])),
+                    Container(
+                      width: 52, height: 52,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.4),
+                            width: 2),
+                      ),
+                      child: Center(child: Text(
+                        name.isNotEmpty ? name[0].toUpperCase() : 'W',
+                        style: const TextStyle(color: Colors.white,
+                            fontSize: 22, fontWeight: FontWeight.w700),
+                      )),
+                    ),
+                  ]),
+                  const SizedBox(height: 16),
+                  Row(children: [
+                    const Icon(Icons.location_on_rounded,
+                        size: 13, color: Colors.white70),
+                    const SizedBox(width: 4),
+                    Text(barangay, style: const TextStyle(
+                        color: Colors.white70, fontSize: 12)),
+                  ]),
+                ]),
+              ),
+            ),
+
+            // ── Stats card below gradient ─────────────────────────────
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 20, offset: const Offset(0, 4))],
+                    ),
+                    child: Row(children: [
+                      _StatPill(
+                        label: s.isEn ? 'Patients' : 'Pasyente',
+                        value: '$patientCount',
+                        icon: Icons.people_rounded,
+                        color: _blue,
+                      ),
+                      _Divider(),
+                      _StatPill(
+                        label: 'Pending',
+                        value: '—',
+                        icon: Icons.pending_rounded,
+                        color: AppTheme.accent,
+                      ),
+                      _Divider(),
+                      _StatPill(
+                        label: s.mensahe,
+                        value: '0',
+                        icon: Icons.chat_bubble_rounded,
+                        color: const Color(0xFF7C3AED),
+                      ),
+                    ]),
+                  ),
+              ),
+            ),
+
+            // ── Recent consultations ──────────────────────────────────
+            SliverToBoxAdapter(
+              child: Padding(
+                padding:
+                    const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Row(children: [
+                  Text(s.isEn ? 'Recent Consultations' : 'Mga Kamakailang Konsultasyon',
+                      style: const TextStyle(fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textPrimary)),
+                  const Spacer(),
+                ]),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: StreamBuilder<List<Map<String, dynamic>>>(
+                  stream: FirebaseDatabase.instance
+                      .ref('consultations')
+                      .orderByChild('createdAt')
+                      .limitToLast(3)
+                      .onValue
+                      .map((e) {
+                        if (!e.snapshot.exists || e.snapshot.value == null) return <Map<String, dynamic>>[];
+                        final data = Map<String, dynamic>.from(e.snapshot.value as Map);
+                        return data.values
+                            .map((v) => Map<String, dynamic>.from(v as Map))
+                            .toList();
+                      }),
+                  builder: (_, snap) {
+                    final items = (snap.data ?? []).take(3).toList();
+                    if (items.isEmpty) {
+                      return Container(
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppTheme.divider)),
+                        child: Center(child: Column(children: [
+                          const Icon(Icons.calendar_today_outlined,
+                              size: 40, color: AppTheme.textHint),
+                          const SizedBox(height: 8),
+                          Text(s.noConsultations,
+                              style: const TextStyle(
+                                  color: AppTheme.textSecondary)),
+                        ])),
+                      );
+                    }
+                    return Column(children: items.map((c) =>
+                        _ConsultationListItem(data: c,
+                            onStatusChanged: () {})).toList());
+                  },
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 32)),
+          ]);
+        },
+      ),
+    );
+  }
+}
+
+class _StatPill extends StatelessWidget {
+  final String label, value;
+  final IconData icon;
+  final Color color;
+  const _StatPill({required this.label, required this.value,
+      required this.icon, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: 40, height: 40,
+        decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            shape: BoxShape.circle),
+        child: Icon(icon, color: color, size: 20),
+      ),
+      const SizedBox(height: 6),
+      Text(value, style: TextStyle(fontSize: 20,
+          fontWeight: FontWeight.w800, color: color)),
+      Text(label, style: const TextStyle(fontSize: 11,
+          color: AppTheme.textSecondary)),
+    ]),
+  );
+}
+
+class _Divider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => Container(
+      width: 1, height: 50, color: AppTheme.divider,
+      margin: const EdgeInsets.symmetric(horizontal: 4));
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Patients
+// ══════════════════════════════════════════════════════════════════════════
+class _WorkerPatients extends ConsumerStatefulWidget {
+  const _WorkerPatients();
+  @override
+  ConsumerState<_WorkerPatients> createState() => _WorkerPatientsState();
+}
+
+class _WorkerPatientsState extends ConsumerState<_WorkerPatients> {
+  String _search = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final s = S(ref.watch(langProvider));
+    final patientsAsync = ref.watch(workerPatientsProvider);
+
+    return Scaffold(
+      backgroundColor: _blueSoft,
+      appBar: _BlueAppBar(title: s.mgaPasyente),
+      body: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: TextField(
+            decoration: InputDecoration(
+              hintText: s.searchPatient,
+              prefixIcon:
+                  const Icon(Icons.search_rounded, color: _blue),
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none),
+              contentPadding:
+                  const EdgeInsets.symmetric(vertical: 12),
+            ),
+            onChanged: (v) => setState(() => _search = v.toLowerCase()),
+          ),
+        ),
+        Expanded(child: patientsAsync.when(
+          loading: () => const Center(
+              child: CircularProgressIndicator(color: _blue)),
+          error: (e, _) => Center(child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              const Icon(Icons.lock_outline_rounded, size: 48, color: AppTheme.textHint),
+              const SizedBox(height: 12),
+              const Text('Permission denied.',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+              const SizedBox(height: 8),
+              const Text(
+                'Please update Firebase Realtime Database rules to allow reads.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text('Go to Firebase Console > Realtime Database > Rules and set .read to true', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+              ),
+            ]),
+          )),
+          data: (patients) {
+            final filtered = _search.isEmpty
+                ? patients
+                : patients.where((p) =>
+                    '${p['firstName'] ?? ''} ${p['lastName'] ?? ''}'
+                        .toLowerCase()
+                        .contains(_search)).toList();
+            if (filtered.isEmpty) return Center(child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+              const Icon(Icons.people_outline_rounded,
+                  size: 56, color: AppTheme.textHint),
+              const SizedBox(height: 12),
+              Text(s.noPatients,
+                  style: const TextStyle(color: AppTheme.textSecondary)),
+            ]));
+            return ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: filtered.length,
+              separatorBuilder: (_, __) =>
+                  const SizedBox(height: 8),
+              itemBuilder: (_, i) {
+                final p = filtered[i];
+                final name =
+                    '${p['firstName'] ?? ''} ${p['lastName'] ?? ''}'
+                        .trim();
+                return Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppTheme.divider),
+                      boxShadow: [BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.03),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2))]),
+                  child: Row(children: [
+                    Stack(
+                      children: [
+                        CircleAvatar(
+                          backgroundColor: _blueLight,
+                          radius: 22,
+                          child: Text(
+                            name.isNotEmpty ? name[0].toUpperCase() : '?',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: _blue, fontSize: 17),
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 0, right: 0,
+                          child: PresenceBadge(
+                              userId: p['patientId'] ?? p['id'] ?? ''),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Text(name.isEmpty ? '(No name)' : name,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14)),
+                      const SizedBox(height: 2),
+                      Text(
+                          p['patientId'] ?? p['id'] ?? '—',
+                          style: const TextStyle(fontSize: 11,
+                              color: AppTheme.textSecondary,
+                              fontFamily: 'monospace')),
+                      if ((p['barangay'] ?? '').isNotEmpty)
+                        Row(children: [
+                          const Icon(Icons.location_on_rounded,
+                              size: 11, color: AppTheme.textHint),
+                          const SizedBox(width: 2),
+                          Text(p['barangay'],
+                              style: const TextStyle(
+                                  fontSize: 11, color: AppTheme.textHint)),
+                        ]),
+                    ])),
+                    const Icon(Icons.chevron_right_rounded,
+                        color: AppTheme.textHint),
+                  ]),
+                );
+              },
+            );
+          },
+        )),
+      ]),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Consultations — clickable, with Accept/Reject/Complete actions
+// ══════════════════════════════════════════════════════════════════════════
+class _WorkerConsultations extends ConsumerStatefulWidget {
+  const _WorkerConsultations();
+  @override
+  ConsumerState<_WorkerConsultations> createState() =>
+      _WorkerConsultationsState();
+}
+
+class _WorkerConsultationsState
+    extends ConsumerState<_WorkerConsultations>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabs;
+  List<Map<String, dynamic>> _consultations = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: 4, vsync: this);
+    _load();
+  }
+
+  @override
+  void dispose() { _tabs.dispose(); super.dispose(); }
+
+  Future<void> _load() async {
+    try {
+      final snap = await FirebaseDatabase.instance
+          .ref('consultations')
+          .get();
+      if (!mounted) return;
+      if (snap.exists && snap.value != null) {
+        final data = Map<String, dynamic>.from(snap.value as Map);
+        final list = data.values
+            .map((v) => Map<String, dynamic>.from(v as Map))
+            .toList();
+        list.sort((a, b) =>
+            (b['createdAt'] ?? b['created_at'] ?? '')
+            .compareTo(a['createdAt'] ?? a['created_at'] ?? ''));
+        setState(() { _consultations = list; _loading = false; });
+      } else {
+        setState(() { _consultations = []; _loading = false; });
+      }
+    } catch (e) {
+      debugPrint('Load consultations error: \$e');
+      if (!mounted) return;
+      setState(() { _consultations = []; _loading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = S(ref.watch(langProvider));
+    final pending = _consultations
+        .where((c) => c['status'] == 'Pending').toList();
+    final confirmed = _consultations
+        .where((c) => c['status'] == 'Confirmed').toList();
+    final completed = _consultations
+        .where((c) => c['status'] == 'Completed').toList();
+    final cancelled = _consultations
+        .where((c) => c['status'] == 'Cancelled').toList();
+
+    return Scaffold(
+      backgroundColor: _blueSoft,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        title: Text(s.mgaKonsultasyonWorker),
+        actions: [
+          IconButton(icon: const Icon(Icons.refresh_rounded),
+              onPressed: _load),
+        ],
+        bottom: TabBar(
+          controller: _tabs,
+          labelColor: _blue,
+          indicatorColor: _blue,
+          unselectedLabelColor: AppTheme.textSecondary,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          tabs: [
+            Tab(text: 'Pending (${pending.length})'),
+            Tab(text: s.isEn ? 'Confirmed' : 'Confirmed'),
+            Tab(text: s.isEn ? 'Completed' : 'Tapos'),
+            Tab(text: s.isEn ? 'Cancelled' : 'Kanselado'),
+          ],
+        ),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: _blue))
+          : TabBarView(controller: _tabs, children: [
+              _ConsultationTabBody(items: pending, onRefresh: _load),
+              _ConsultationTabBody(items: confirmed, onRefresh: _load),
+              _ConsultationTabBody(items: completed, onRefresh: _load),
+              _ConsultationTabBody(items: cancelled, onRefresh: _load),
+            ]),
+    );
+  }
+}
+
+class _ConsultationTabBody extends ConsumerWidget {
+  final List<Map<String, dynamic>> items;
+  final VoidCallback onRefresh;
+  const _ConsultationTabBody(
+      {required this.items, required this.onRefresh});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = S(ref.watch(langProvider));
+    if (items.isEmpty) return Center(child: Column(
+        mainAxisAlignment: MainAxisAlignment.center, children: [
+      const Icon(Icons.calendar_today_outlined,
+          size: 56, color: AppTheme.textHint),
+      const SizedBox(height: 12),
+      Text(s.noConsultations,
+          style: const TextStyle(color: AppTheme.textSecondary)),
+    ]));
+    return RefreshIndicator(
+      onRefresh: () async => onRefresh(),
+      child: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: items.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 8),
+        itemBuilder: (_, i) => _ConsultationListItem(
+            data: items[i], onStatusChanged: onRefresh),
+      ),
+    );
+  }
+}
+
+class _ConsultationListItem extends ConsumerWidget {
+  final Map<String, dynamic> data;
+  final VoidCallback onStatusChanged;
+  const _ConsultationListItem(
+      {required this.data, required this.onStatusChanged});
+
+  Color _statusColor(String status) => switch (status) {
+        'Confirmed' => AppTheme.primary,
+        'Completed' => const Color(0xFF7C3AED),
+        'Cancelled' => AppTheme.error,
+        _ => AppTheme.accent,
+      };
+
+  void _showDetail(BuildContext context) {
+    final status = data['status'] ?? 'Pending';
+    final isPending = status == 'Pending';
+    final isConfirmed = status == 'Confirmed';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (_, ctrl) => Column(children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Container(width: 40, height: 4,
+                decoration: BoxDecoration(color: AppTheme.divider,
+                    borderRadius: BorderRadius.circular(2))),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+            child: Row(children: [
+              Expanded(child: Text('Consultation Details',
+                  style: const TextStyle(fontSize: 18,
+                      fontWeight: FontWeight.w800))),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                    color: _statusColor(status).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(20)),
+                child: Text(status, style: TextStyle(
+                    color: _statusColor(status), fontSize: 12,
+                    fontWeight: FontWeight.w700)),
+              ),
+            ]),
+          ),
+          Expanded(child: SingleChildScrollView(
+            controller: ctrl,
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+              _DetailRow('Case ID', data['case_id'] ?? '—'),
+              _DetailRow('Patient ID', data['patient_id'] ?? '—'),
+              _DetailRow('Type', data['type'] ?? '—'),
+              _DetailRow('Symptoms', data['symptoms'] ?? '—'),
+              _DetailRow('Temperature',
+                  '${data['temperature'] ?? '—'}°C'),
+              _DetailRow('Pain Level',
+                  '${data['pain_level'] ?? '—'}/10'),
+              _DetailRow('Duration', data['duration'] ?? '—'),
+              if ((data['notes'] ?? '').isNotEmpty)
+                _DetailRow('Notes', data['notes']),
+              _DetailRow('Preferred Date',
+                  data['preferred_date'] ?? '—'),
+              _DetailRow('Preferred Time',
+                  data['preferred_time'] ?? '—'),
+              _DetailRow('Health Center',
+                  data['health_center'] ?? '—'),
+              const SizedBox(height: 20),
+
+              // Action buttons
+              if (isPending) ...[
+                SizedBox(width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      final id = data['id'] ?? data['case_id'] ?? '';
+                      await DatabaseService()
+                          .updateConsultationStatus(id, 'Confirmed');
+                      try {
+                        await FirebaseDatabase.instance
+                            .ref('consultations/\$id')
+                            .update({'status': 'Confirmed'});
+                      } catch (e) { debugPrint(e.toString()); }
+                      Navigator.pop(context);
+                      onStatusChanged();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Consultation confirmed!'),
+                          backgroundColor: AppTheme.primary,
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.check_circle_rounded),
+                    label: const Text('Accept / Confirm'),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primary,
+                        minimumSize: const Size(double.infinity, 50)),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final id = data['id'] ?? data['case_id'] ?? '';
+                      await DatabaseService()
+                          .updateConsultationStatus(id, 'Cancelled');
+                      try {
+                        await FirebaseDatabase.instance
+                            .ref('consultations/\$id')
+                            .update({'status': 'Cancelled'});
+                      } catch (e) { debugPrint(e.toString()); }
+                      Navigator.pop(context);
+                      onStatusChanged();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Consultation cancelled.'),
+                          backgroundColor: AppTheme.error,
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.cancel_outlined,
+                        color: AppTheme.error),
+                    label: const Text('Reject',
+                        style: TextStyle(color: AppTheme.error)),
+                    style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: AppTheme.error),
+                        minimumSize: const Size(double.infinity, 50)),
+                  ),
+                ),
+              ],
+              if (isConfirmed)
+                SizedBox(width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      final id = data['id'] ?? data['case_id'] ?? '';
+                      await DatabaseService()
+                          .updateConsultationStatus(id, 'Completed');
+                      try {
+                        await FirebaseDatabase.instance
+                            .ref('consultations/\$id')
+                            .update({'status': 'Completed'});
+                      } catch (e) { debugPrint(e.toString()); }
+                      Navigator.pop(context);
+                      onStatusChanged();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Marked as completed!'),
+                          backgroundColor: Color(0xFF7C3AED),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.task_alt_rounded),
+                    label: const Text('Mark as Completed'),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF7C3AED),
+                        minimumSize: const Size(double.infinity, 50)),
+                  ),
+                ),
+              const SizedBox(height: 24),
+            ]),
+          )),
+        ]),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = data['status'] ?? 'Pending';
+    final sc = _statusColor(status);
+
+    return GestureDetector(
+      onTap: () => _showDetail(context),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppTheme.divider),
+            boxShadow: [BoxShadow(
+                color: Colors.black.withValues(alpha: 0.03),
+                blurRadius: 8, offset: const Offset(0, 2))]),
+        child: Row(children: [
+          Container(
+            width: 46, height: 46,
+            decoration: BoxDecoration(
+                color: sc.withValues(alpha: 0.1),
+                shape: BoxShape.circle),
+            child: Icon(Icons.calendar_month_rounded, color: sc, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(data['case_id'] ?? '—',
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700, fontSize: 13)),
+            const SizedBox(height: 2),
+            Text(
+                '${data['type'] ?? '—'} · ${data['patient_id'] ?? '—'}',
+                style: const TextStyle(
+                    fontSize: 11, color: AppTheme.textSecondary),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 3),
+            Text(data['preferred_date'] ?? '—',
+                style: const TextStyle(
+                    fontSize: 11, color: AppTheme.textHint)),
+          ])),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                  color: sc.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8)),
+              child: Text(status,
+                  style: TextStyle(color: sc, fontSize: 10,
+                      fontWeight: FontWeight.w700)),
+            ),
+            const SizedBox(height: 6),
+            const Icon(Icons.chevron_right_rounded,
+                color: AppTheme.textHint, size: 18),
+          ]),
+        ]),
+      ),
+    );
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  final String label, value;
+  const _DetailRow(this.label, this.value);
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SizedBox(width: 120,
+          child: Text(label, style: const TextStyle(
+              fontSize: 12, color: AppTheme.textSecondary,
+              fontWeight: FontWeight.w500))),
+      Expanded(child: Text(value, style: const TextStyle(
+          fontSize: 13, fontWeight: FontWeight.w600,
+          color: AppTheme.textPrimary))),
+    ]),
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Medicine
+// ══════════════════════════════════════════════════════════════════════════
+class _WorkerMedicine extends ConsumerStatefulWidget {
+  const _WorkerMedicine();
+  @override
+  ConsumerState<_WorkerMedicine> createState() => _WorkerMedicineState();
+}
+
+class _WorkerMedicineState extends ConsumerState<_WorkerMedicine>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabs;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: 3, vsync: this);
+  }
+
+  @override
+  void dispose() { _tabs.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = S(ref.watch(langProvider));
+    final medAsync = ref.watch(workerMedicineProvider);
+
+    return Scaffold(
+      backgroundColor: _blueSoft,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        title: Text(s.isEn ? 'Medicine Requests' : 'Mga Hiling ng Gamot',
+            style: const TextStyle(fontWeight: FontWeight.w700)),
+        bottom: TabBar(
+          controller: _tabs,
+          labelColor: _blue,
+          indicatorColor: _blue,
+          unselectedLabelColor: AppTheme.textSecondary,
+          tabs: [
+            Tab(text: 'Pending'),
+            Tab(text: s.isEn ? 'Approved' : 'Aprubado'),
+            Tab(text: s.isEn ? 'Cancelled' : 'Nakansel'),
+          ],
+        ),
+      ),
+      body: medAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator(color: _blue)),
+        error: (e, _) => Center(child: Text('Error: $e')),
+        data: (all) {
+          final pending = all.where((r) => r['status'] == 'Pending').toList();
+          final approved = all.where((r) => r['status'] == 'Approved' || r['status'] == 'Completed').toList();
+          final cancelled = all.where((r) => r['status'] == 'Cancelled').toList();
+          return TabBarView(controller: _tabs, children: [
+            _MedList(items: pending, onAction: (id, status) => _updateMed(id, status)),
+            _MedList(items: approved, onAction: (id, status) => _updateMed(id, status)),
+            _MedList(items: cancelled, onAction: null),
+          ]);
+        },
+      ),
+    );
+  }
+
+  Future<void> _updateMed(String id, String status) async {
+    try {
+      await FirebaseDatabase.instance
+          .ref('medicineRequests/' + id)
+          .update({'status': status});
+    } catch (e) { debugPrint(e.toString()); }
+    ref.invalidate(workerMedicineProvider);
+  }
+}
+
+class _MedList extends StatelessWidget {
+  final List<Map<String, dynamic>> items;
+  final Function(String id, String status)? onAction;
+  const _MedList({required this.items, required this.onAction});
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return Center(child: Column(
+        mainAxisAlignment: MainAxisAlignment.center, children: [
+      const Icon(Icons.medication_outlined, size: 48, color: AppTheme.textHint),
+      const SizedBox(height: 12),
+      const Text('No requests', style: TextStyle(color: AppTheme.textSecondary)),
+    ]));
+
+    return ListView.separated(
+      padding: const EdgeInsets.all(16),
+      itemCount: items.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (_, i) {
+        final r = items[i];
+        final status = r['status'] ?? 'Pending';
+        final statusColor = status == 'Approved' || status == 'Completed'
+            ? AppTheme.primary
+            : status == 'Cancelled'
+                ? AppTheme.error
+                : AppTheme.accent;
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppTheme.divider),
+              boxShadow: [BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.03),
+                  blurRadius: 8, offset: const Offset(0, 2))]),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(
+                width: 42, height: 42,
+                decoration: BoxDecoration(
+                    color: AppTheme.primaryLight,
+                    borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.medication_rounded,
+                    color: AppTheme.primary, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(r['medicine_name'] ?? r['medicineName'] ?? '—',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 14)),
+                Text('ID: ' + (r['id'] ?? '—'),
+                    style: const TextStyle(
+                        fontSize: 11, color: AppTheme.textSecondary,
+                        fontFamily: 'monospace')),
+              ])),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8)),
+                child: Text(status, style: TextStyle(
+                    color: statusColor, fontSize: 11,
+                    fontWeight: FontWeight.w700)),
+              ),
+            ]),
+            Text('Patient: ' + (r['patient_id'] ?? r['patientId'] ?? '—'),
+                style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+            Text('Qty: ' + (r['quantity']?.toString() ?? '1') + '  •  ' + (r['type'] ?? '—'),
+                style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+            if (onAction != null && status == 'Pending') ...[
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => onAction!(r['id'] ?? '', 'Approved'),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primary,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(0, 38),
+                        elevation: 0),
+                    child: const Text('Approve', style: TextStyle(fontSize: 13)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => onAction!(r['id'] ?? '', 'Cancelled'),
+                    style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: AppTheme.error),
+                        minimumSize: const Size(0, 38)),
+                    child: const Text('Reject',
+                        style: TextStyle(color: AppTheme.error, fontSize: 13)),
+                  ),
+                ),
+              ]),
+            ],
+          ]),
+        );
+      },
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════════════
+// Bookings -- outer screen with Consultations + Medicine inner tabs
+// ══════════════════════════════════════════════════════════════════════
+class _WorkerBookings extends ConsumerStatefulWidget {
+  const _WorkerBookings();
+  @override
+  ConsumerState<_WorkerBookings> createState() => _WorkerBookingsState();
+}
+
+class _WorkerBookingsState extends ConsumerState<_WorkerBookings>
+    with SingleTickerProviderStateMixin {
+  late TabController _outerTabs;
+  List<Map<String, dynamic>> _consultations = [];
+  bool _consultLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _outerTabs = TabController(length: 2, vsync: this);
+    _loadConsultations();
+  }
+
+  @override
+  void dispose() { _outerTabs.dispose(); super.dispose(); }
+
+  Future<void> _loadConsultations() async {
+    try {
+      final snap = await FirebaseDatabase.instance.ref('consultations').get();
+      if (!mounted) return;
+      if (snap.exists && snap.value != null) {
+        final data = Map<String, dynamic>.from(snap.value as Map);
+        final list = data.values
+            .map((v) => Map<String, dynamic>.from(v as Map))
+            .toList();
+        list.sort((a, b) =>
+            (b['createdAt'] ?? b['created_at'] ?? '')
+            .compareTo(a['createdAt'] ?? a['created_at'] ?? ''));
+        setState(() { _consultations = list; _consultLoading = false; });
+      } else {
+        setState(() { _consultations = []; _consultLoading = false; });
+      }
+    } catch (e) {
+      debugPrint('Load consultations error: ' + e.toString());
+      if (!mounted) return;
+      setState(() { _consultations = []; _consultLoading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = S(ref.watch(langProvider));
+    final medAsync = ref.watch(workerMedicineProvider);
+    final cPending   = _consultations.where((c) => c['status'] == 'Pending').toList();
+    final cConfirmed = _consultations.where((c) => c['status'] == 'Confirmed').toList();
+    final cCompleted = _consultations.where((c) => c['status'] == 'Completed').toList();
+    final cCancelled = _consultations.where((c) => c['status'] == 'Cancelled').toList();
+    return Scaffold(
+      backgroundColor: _blueSoft,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        title: Text(s.isEn ? 'Bookings' : 'Bookings',
+            style: const TextStyle(fontWeight: FontWeight.w700)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: () {
+              _loadConsultations();
+              ref.invalidate(workerMedicineProvider);
+            },
+          ),
+        ],
+        bottom: TabBar(
+          controller: _outerTabs,
+          labelColor: _blue,
+          indicatorColor: _blue,
+          unselectedLabelColor: AppTheme.textSecondary,
+          tabs: [
+            Tab(icon: const Icon(Icons.calendar_month_rounded, size: 18),
+                text: s.isEn ? 'Consultations' : 'Konsultasyon'),
+            Tab(icon: const Icon(Icons.medication_rounded, size: 18),
+                text: s.isEn ? 'Medicine' : 'Gamot'),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _outerTabs,
+        children: [
+          _BookingsConsultationPane(
+            loading: _consultLoading,
+            pending: cPending, confirmed: cConfirmed,
+            completed: cCompleted, cancelled: cCancelled,
+            onRefresh: _loadConsultations,
+          ),
+          medAsync.when(
+            loading: () => const Center(child: CircularProgressIndicator(color: _blue)),
+            error: (e, _) => Center(child: Text('Error: ' + e.toString())),
+            data: (all) {
+              final mPending   = all.where((r) => r['status'] == 'Pending').toList();
+              final mApproved  = all.where((r) =>
+                  r['status'] == 'Approved' || r['status'] == 'Completed').toList();
+              final mCancelled = all.where((r) => r['status'] == 'Cancelled').toList();
+              return _BookingsMedicinePane(
+                pending: mPending, approved: mApproved, cancelled: mCancelled,
+                onAction: (id, status) async {
+                  try {
+                    await FirebaseDatabase.instance
+                        .ref('medicineRequests/' + id)
+                        .update({'status': status});
+                  } catch (e) { debugPrint(e.toString()); }
+                  ref.invalidate(workerMedicineProvider);
+                },
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// -- Consultations pane (Pending / Confirmed / Completed / Cancelled) ---------
+class _BookingsConsultationPane extends ConsumerStatefulWidget {
+  final bool loading;
+  final List<Map<String, dynamic>> pending, confirmed, completed, cancelled;
+  final VoidCallback onRefresh;
+  const _BookingsConsultationPane({
+    required this.loading, required this.pending, required this.confirmed,
+    required this.completed, required this.cancelled, required this.onRefresh,
+  });
+  @override
+  ConsumerState<_BookingsConsultationPane> createState() =>
+      _BookingsConsultationPaneState();
+}
+
+class _BookingsConsultationPaneState
+    extends ConsumerState<_BookingsConsultationPane>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabs;
+  @override
+  void initState() { super.initState(); _tabs = TabController(length: 4, vsync: this); }
+  @override
+  void dispose() { _tabs.dispose(); super.dispose(); }
+  @override
+  Widget build(BuildContext context) {
+    final s = S(ref.watch(langProvider));
+    if (widget.loading) return const Center(child: CircularProgressIndicator(color: _blue));
+    return Column(children: [
+      Container(
+        color: Colors.white,
+        child: TabBar(
+          controller: _tabs,
+          labelColor: _blue, indicatorColor: _blue,
+          unselectedLabelColor: AppTheme.textSecondary,
+          isScrollable: true, tabAlignment: TabAlignment.start,
+          tabs: [
+            Tab(text: 'Pending (' + widget.pending.length.toString() + ')'),
+            Tab(text: s.isEn ? 'Confirmed' : 'Kumpirmado'),
+            Tab(text: s.isEn ? 'Completed' : 'Tapos'),
+            Tab(text: s.isEn ? 'Cancelled' : 'Kanselado'),
+          ],
+        ),
+      ),
+      Expanded(child: TabBarView(controller: _tabs, children: [
+        _ConsultationTabBody(items: widget.pending,   onRefresh: widget.onRefresh),
+        _ConsultationTabBody(items: widget.confirmed, onRefresh: widget.onRefresh),
+        _ConsultationTabBody(items: widget.completed, onRefresh: widget.onRefresh),
+        _ConsultationTabBody(items: widget.cancelled, onRefresh: widget.onRefresh),
+      ])),
+    ]);
+  }
+}
+
+// -- Medicine pane (Pending / Approved / Cancelled) ---------------------------
+class _BookingsMedicinePane extends StatefulWidget {
+  final List<Map<String, dynamic>> pending, approved, cancelled;
+  final Future<void> Function(String id, String status) onAction;
+  const _BookingsMedicinePane({
+    required this.pending, required this.approved,
+    required this.cancelled, required this.onAction,
+  });
+  @override
+  State<_BookingsMedicinePane> createState() => _BookingsMedicinePaneState();
+}
+
+class _BookingsMedicinePaneState extends State<_BookingsMedicinePane>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabs;
+  @override
+  void initState() { super.initState(); _tabs = TabController(length: 3, vsync: this); }
+  @override
+  void dispose() { _tabs.dispose(); super.dispose(); }
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      Container(
+        color: Colors.white,
+        child: TabBar(
+          controller: _tabs,
+          labelColor: _blue, indicatorColor: _blue,
+          unselectedLabelColor: AppTheme.textSecondary,
+          tabs: [
+            Tab(text: 'Pending (' + widget.pending.length.toString() + ')'),
+            const Tab(text: 'Approved'),
+            const Tab(text: 'Cancelled'),
+          ],
+        ),
+      ),
+      Expanded(child: TabBarView(controller: _tabs, children: [
+        _MedList(items: widget.pending,   onAction: widget.onAction),
+        _MedList(items: widget.approved,  onAction: null),
+        _MedList(items: widget.cancelled, onAction: null),
+      ])),
+    ]);
+  }
+}
+
+// Messages - real-time Firebase inbox
+// ══════════════════════════════════════════════════════════════════════════
+class _WorkerMessages extends ConsumerStatefulWidget {
+  const _WorkerMessages();
+  @override
+  ConsumerState<_WorkerMessages> createState() => _WorkerMessagesState();
+}
+
+class _WorkerMessagesState extends ConsumerState<_WorkerMessages> {
+  Map<String, Map<String, dynamic>> _threads = {};
+  String? _openThread;
+  List<Map<String, dynamic>> _threadMessages = [];
+  final _scrollCtrl = ScrollController();
+  final _replyCtrl = TextEditingController();
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenToAllThreads();
+  }
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    _replyCtrl.dispose();
+    super.dispose();
+  }
+
+  void _listenToAllThreads() {
+    FirebaseDatabase.instance.ref('messages').onValue.listen((event) {
+      if (!event.snapshot.exists || event.snapshot.value == null) {
+        if (mounted) setState(() { _threads = {}; _loading = false; });
+        return;
+      }
+      final raw = Map<String, dynamic>.from(event.snapshot.value as Map);
+      final newThreads = <String, Map<String, dynamic>>{};
+      raw.forEach((patientId, msgs) {
+        if (msgs is Map) {
+          final allMsgs = msgs.values
+              .map((m) => Map<String, dynamic>.from(m as Map? ?? {}))
+              .toList()
+            ..sort((a, b) => (a['sent_at'] ?? '').compareTo(b['sent_at'] ?? ''));
+          final patientMsgs = allMsgs.where((m) => (m['is_system'] ?? 0) == 0).toList();
+          if (patientMsgs.isNotEmpty) {
+            final latest = patientMsgs.last;
+            newThreads[patientId] = {
+              'patientId': patientId,
+              'patientName': latest['patient_name'] ?? patientId,
+              'latestMessage': latest['content'] ?? '',
+              'latestTime': latest['sent_at'] ?? '',
+              'allMessages': allMsgs,
+            };
+          }
+        }
+      });
+      if (mounted) {
+        setState(() {
+          _threads = newThreads;
+          _loading = false;
+          if (_openThread != null && newThreads.containsKey(_openThread)) {
+            _threadMessages = List<Map<String, dynamic>>
+                .from(newThreads[_openThread]!['allMessages'] as List);
+            Future.delayed(const Duration(milliseconds: 200), () {
+              if (_scrollCtrl.hasClients) {
+                _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent,
+                    duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+              }
+            });
+          }
+        });
+      }
+    });
+  }
+
+  Future<void> _sendReply(String patientId) async {
+    final text = _replyCtrl.text.trim();
+    if (text.isEmpty) return;
+    final ref = FirebaseDatabase.instance.ref('messages/$patientId').push();
+    await ref.set({
+      'id': ref.key,
+      'patient_id': patientId,
+      'sender': 'worker',
+      'content': text,
+      'sent_at': DateTime.now().toIso8601String(),
+      'is_system': 0,
+    });
+    _replyCtrl.clear();
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = S(ref.watch(langProvider));
+    if (_openThread != null) return _buildChat(s);
+
+    return Scaffold(
+      backgroundColor: _blueSoft,
+      appBar: _BlueAppBar(title: s.mensahe),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: _blue))
+          : _threads.isEmpty
+              ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  const Icon(Icons.chat_bubble_outline_rounded, size: 56, color: AppTheme.textHint),
+                  const SizedBox(height: 12),
+                  Text(s.isEn ? 'No messages yet' : 'Wala pang mensahe',
+                      style: const TextStyle(color: AppTheme.textSecondary)),
+                  const SizedBox(height: 8),
+                  Text(s.isEn ? 'Patient messages will appear here.' : 'Makikita dito ang mga mensahe ng mga pasyente.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: AppTheme.textHint, fontSize: 12)),
+                ]))
+              : ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _threads.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (_, i) {
+                    final t = _threads.values.toList()[i];
+                    final patientId = t['patientId'] as String;
+                    String timeStr = '';
+                    try { timeStr = DateFormat('MMM d, h:mm a').format(DateTime.parse(t['latestTime'] as String)); } catch (_) {}
+                    return GestureDetector(
+                      onTap: () => setState(() {
+                        _openThread = patientId;
+                        _threadMessages = List<Map<String, dynamic>>.from(t['allMessages'] as List);
+                      }),
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppTheme.divider),
+                            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03),
+                                blurRadius: 8, offset: const Offset(0, 2))]),
+                        child: Row(children: [
+                          CircleAvatar(backgroundColor: _blueLight, radius: 22,
+                              child: Text(
+                                (t['patientName'] as String).isNotEmpty
+                                    ? (t['patientName'] as String)[0].toUpperCase() : 'P',
+                                style: const TextStyle(color: _blue, fontWeight: FontWeight.w800, fontSize: 17))),
+                          const SizedBox(width: 12),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(t['patientName'] as String,
+                                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                            const SizedBox(height: 2),
+                            Text(t['latestMessage'] as String,
+                                maxLines: 1, overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                          ])),
+                          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                            Text(timeStr, style: const TextStyle(fontSize: 10, color: AppTheme.textHint)),
+                            const SizedBox(height: 4),
+                            const Icon(Icons.chevron_right_rounded, color: AppTheme.textHint, size: 18),
+                          ]),
+                        ]),
+                      ),
+                    );
+                  }),
+    );
+  }
+
+  Widget _buildChat(S s) {
+    final thread = _threads[_openThread];
+    final name = thread?['patientName'] as String? ?? _openThread ?? 'Patient';
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      appBar: AppBar(
+        backgroundColor: Colors.white, surfaceTintColor: Colors.transparent,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_rounded, color: _blue),
+          onPressed: () => setState(() { _openThread = null; _threadMessages = []; }),
+        ),
+        title: Row(children: [
+          CircleAvatar(backgroundColor: _blueLight, radius: 16,
+              child: Text(name.isNotEmpty ? name[0].toUpperCase() : 'P',
+                  style: const TextStyle(color: _blue, fontWeight: FontWeight.w800))),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+            Text(_openThread ?? '', style: const TextStyle(fontSize: 10,
+                color: AppTheme.textSecondary, fontFamily: 'monospace')),
+          ])),
+        ]),
+        bottom: PreferredSize(preferredSize: const Size.fromHeight(1),
+            child: Container(height: 1, color: AppTheme.divider)),
+      ),
+      body: Column(children: [
+        Expanded(child: _threadMessages.isEmpty
+            ? Center(child: Text(s.isEn ? 'No messages' : 'Walang mensahe'))
+            : ListView.builder(
+                controller: _scrollCtrl,
+                padding: const EdgeInsets.all(16),
+                itemCount: _threadMessages.length,
+                itemBuilder: (_, i) {
+                  final m = _threadMessages[i];
+                  final isWorker = m['sender'] == 'worker';
+                  final isSystem = (m['is_system'] ?? 0) == 1;
+                  String time = '';
+                  try { time = DateFormat('h:mm a').format(DateTime.parse(m['sent_at'] ?? '')); } catch (_) {}
+                  if (isSystem) return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Center(child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(color: AppTheme.divider, borderRadius: BorderRadius.circular(20)),
+                      child: Text(m['content'] ?? '', textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary)))));
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      mainAxisAlignment: isWorker ? MainAxisAlignment.end : MainAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        if (!isWorker) ...[
+                          CircleAvatar(backgroundColor: AppTheme.primaryLight, radius: 14,
+                              child: const Icon(Icons.person_rounded, size: 14, color: AppTheme.primary)),
+                          const SizedBox(width: 6),
+                        ],
+                        Flexible(child: Column(
+                          crossAxisAlignment: isWorker ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: isWorker ? _blue : Colors.white,
+                                borderRadius: BorderRadius.only(
+                                  topLeft: const Radius.circular(16), topRight: const Radius.circular(16),
+                                  bottomLeft: Radius.circular(isWorker ? 16 : 4),
+                                  bottomRight: Radius.circular(isWorker ? 4 : 16),
+                                ),
+                                border: isWorker ? null : Border.all(color: AppTheme.divider),
+                              ),
+                              child: Text(m['content'] ?? '',
+                                  style: TextStyle(color: isWorker ? Colors.white : AppTheme.textPrimary,
+                                      fontSize: 14, height: 1.4)),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(time, style: const TextStyle(fontSize: 10, color: AppTheme.textHint)),
+                          ],
+                        )),
+                      ],
+                    ),
+                  );
+                })),
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+          child: SafeArea(top: false, child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Expanded(child: TextField(
+              controller: _replyCtrl, maxLines: 3, minLines: 1,
+              style: const TextStyle(fontSize: 14),
+              decoration: InputDecoration(
+                hintText: s.isEn ? 'Reply to patient...' : 'Sumagot sa pasyente...',
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(24),
+                    borderSide: const BorderSide(color: AppTheme.divider)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(24),
+                    borderSide: const BorderSide(color: AppTheme.divider)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(24),
+                    borderSide: const BorderSide(color: _blue, width: 2)),
+              ),
+            )),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => _sendReply(_openThread!),
+              child: Container(
+                width: 46, height: 46,
+                decoration: BoxDecoration(color: _blue, shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(color: _blue.withValues(alpha: 0.3),
+                        blurRadius: 8, offset: const Offset(0, 3))]),
+                child: const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+              ),
+            ),
+          ])),
+        ),
+      ]),
+    );
+  }
+}
+
+
+class _WorkerProfile extends ConsumerStatefulWidget {
+  const _WorkerProfile();
+  @override
+  ConsumerState<_WorkerProfile> createState() => _WorkerProfileState();
+}
+
+class _WorkerProfileState extends ConsumerState<_WorkerProfile> {
+  Map<String, String> _info = {};
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    final p = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() => _info = {
+          'name': p.getString('patient_name') ?? 'Health Worker',
+          'phone': p.getString('user_phone') ?? '—',
+          'barangay': p.getString('patient_barangay') ?? '—',
+          'health_center': p.getString('patient_health_center') ?? '—',
+        });
+  }
+
+  Future<void> _logout() async {
+    await showLogoutDialog(context, ref);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = S(ref.watch(langProvider));
+    final name = _info['name'] ?? 'W';
+    final initials = name.split(' ')
+        .where((w) => w.isNotEmpty).map((w) => w[0]).take(2)
+        .join().toUpperCase();
+
+    return Scaffold(
+      backgroundColor: _blueSoft,
+      body: CustomScrollView(slivers: [
+        SliverAppBar(
+          backgroundColor: _blue,
+          expandedHeight: 200,
+          pinned: true,
+          surfaceTintColor: Colors.transparent,
+          flexibleSpace: FlexibleSpaceBar(
+            background: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                    colors: [_blue, _blueDark],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight),
+              ),
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+                  child: Column(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                    Container(
+                      width: 68, height: 68,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                      child: Center(child: Text(initials,
+                          style: const TextStyle(color: Colors.white,
+                              fontSize: 24, fontWeight: FontWeight.w800))),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(name, style: const TextStyle(color: Colors.white,
+                        fontSize: 18, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 4),
+                      decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(20)),
+                      child: Text(
+                          s.isEn ? 'Healthcare Worker' : 'Health Worker',
+                          style: const TextStyle(color: Colors.white,
+                              fontSize: 12, fontWeight: FontWeight.w600)),
+                    ),
+                  ]),
+                ),
+              ),
+            ),
+          ),
+        ),
+        SliverList(delegate: SliverChildListDelegate([
+          const SizedBox(height: 16),
+          // Info card
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 10, offset: const Offset(0, 2))]),
+            child: Column(children: [
+              _PRow(Icons.phone_rounded, s.isEn ? 'Phone' : 'Numero',
+                  _info['phone'] ?? '—'),
+              const Divider(height: 1, indent: 52),
+              _PRow(Icons.location_on_rounded, s.barangay,
+                  _info['barangay'] ?? '—'),
+              const Divider(height: 1, indent: 52),
+              _PRow(Icons.local_hospital_rounded, s.healthCenter,
+                  _info['health_center'] ?? '—', maxLines: 2),
+            ]),
+          ),
+          const SizedBox(height: 16),
+          // Language toggle
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 10, offset: const Offset(0, 2))]),
+            child: Row(children: [
+              Container(width: 36, height: 36,
+                  decoration: BoxDecoration(
+                      color: _blueLight,
+                      borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.language_rounded, color: _blue, size: 20)),
+              const SizedBox(width: 12),
+              Text(s.language, style: const TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              const LangToggle(),
+            ]),
+          ),
+          const SizedBox(height: 16),
+          // Logout
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ElevatedButton.icon(
+              onPressed: _logout,
+              icon: const Icon(Icons.logout_rounded),
+              label: Text(s.logout),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.error,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 50)),
+            ),
+          ),
+          const SizedBox(height: 32),
+        ])),
+      ]),
+    );
+  }
+}
+
+class _PRow extends StatelessWidget {
+  final IconData icon;
+  final String label, value;
+  final int maxLines;
+  const _PRow(this.icon, this.label, this.value, {this.maxLines = 1});
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    child: Row(children: [
+      Icon(icon, color: _blue, size: 20),
+      const SizedBox(width: 12),
+      Expanded(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(
+            fontSize: 11, color: AppTheme.textSecondary)),
+        const SizedBox(height: 2),
+        Text(value, style: const TextStyle(
+            fontSize: 14, fontWeight: FontWeight.w600),
+            maxLines: maxLines, overflow: TextOverflow.ellipsis),
+      ])),
+    ]),
+  );
+}
+
+// ── Shared blue app bar ───────────────────────────────────────────────────
+class _BlueAppBar extends StatelessWidget implements PreferredSizeWidget {
+  final String title;
+  const _BlueAppBar({required this.title});
+
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+
+  @override
+  Widget build(BuildContext context) => AppBar(
+    backgroundColor: Colors.white,
+    surfaceTintColor: Colors.transparent,
+    title: Text(title, style: const TextStyle(
+        fontWeight: FontWeight.w700, color: AppTheme.textPrimary)),
+    iconTheme: const IconThemeData(color: _blue),
+    bottom: PreferredSize(
+      preferredSize: const Size.fromHeight(1),
+      child: Container(height: 1, color: AppTheme.divider),
+    ),
+  );
+}

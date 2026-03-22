@@ -1,0 +1,24 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "alagahub-10278",
+          "appId": "1:20191958664:android:06512047c57e073164b13d",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "alagahub-10278",
+          "configurations": {
+            "android": "1:20191958664:android:06512047c57e073164b13d"
+          }
+        }
+      }
+    }
+  },
+  "database": {
+    "rules": "database.rules.json"
+  }
+}
